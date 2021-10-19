@@ -1,12 +1,19 @@
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use std::io::Read;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const STATUS_TIME_TO_SECONDS: i64 = 1_000_000_000;
 const STATUS_TIME_TO_MINUTES: i64 = 60_000_000_000;
+
+const STATE_UNKNOWN: u8 = 0;
+const STATE_RUNNING: u8 = 1;
+const STATE_BREAKING: u8 = 2;
+const STATE_COMPLETE: u8 = 3;
+const STATE_PAUSED: u8 = 4;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Status {
@@ -22,18 +29,25 @@ struct Status {
 }
 
 impl Status {
+    fn is_change(&self, other: &Status) -> bool {
+        self.state != other.state
+            || (self.remaining_minutes() != other.remaining_minutes()
+                && self.state != STATE_COMPLETE)
+    }
+
     fn state(&self) -> &str {
         match self.state {
-            1 => "RUNNING",
-            2 => "BREAKING",
-            3 => "COMPLETE",
-            4 => "PAUSED",
-            _ => "?",
+            STATE_RUNNING => "RUNNING",
+            STATE_BREAKING => "BREAKING",
+            STATE_COMPLETE => "COMPLETE",
+            STATE_PAUSED => "PAUSED",
+            _ => "UNKNOWN",
         }
     }
 
     fn remaining_minutes(&self) -> i64 {
-        self.remaining / STATUS_TIME_TO_MINUTES
+        // Without adding one, 59s would be 0m remaining.
+        1 + self.remaining / STATUS_TIME_TO_MINUTES
     }
 
     fn remaining_seconds(&self) -> i64 {
@@ -61,7 +75,7 @@ impl Status {
     }
 }
 
-fn handle_client(mut stream: UnixStream) -> std::io::Result<()> {
+fn handle_client(mut stream: UnixStream) -> std::io::Result<Status> {
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
 
@@ -76,20 +90,54 @@ fn handle_client(mut stream: UnixStream) -> std::io::Result<()> {
 
     let status: Status = serde_json::from_str(json_str).unwrap();
 
-    println!("{:?}: {:?}", status.state(), status.format_remaining());
+    return Ok(status);
+}
 
-    return Ok(());
+fn update_slack(emoji: &str, message: &str) {
+    Command::new("slack_status")
+        .args(&[emoji, message])
+        .output()
+        .expect("failed to execute process");
+}
+
+fn do_update(status: &Status) {
+    match status.state {
+        STATE_RUNNING => update_slack(
+            "tomato",
+            format!("{}m remaining", status.remaining_minutes()).as_str(),
+        ),
+        STATE_BREAKING => update_slack("", ""),
+        STATE_COMPLETE => update_slack("", ""),
+        STATE_PAUSED => update_slack("", ""),
+        _ => (),
+    }
 }
 
 fn main() -> std::io::Result<()> {
     let listener = UnixListener::bind("/Users/amiel/.pomo/publish.sock")?;
+    let mut current_status = Status {
+        count: 0,
+        n_pomodoros: 0,
+        remaining: 0,
+        state: STATE_UNKNOWN,
+    };
 
     // accept connections and process them, spawning a new thread for each one
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 /* connection succeeded */
-                handle_client(stream)?;
+                let status = handle_client(stream)?;
+
+                if current_status.is_change(&status) {
+                    println!(
+                        "UPDATE: {:?}: {:?}",
+                        status.state(),
+                        status.format_remaining()
+                    );
+                    current_status = status;
+                    do_update(&current_status);
+                }
             }
             Err(err) => {
                 print!("Error incoming {:?}", err);
