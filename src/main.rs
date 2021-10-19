@@ -100,15 +100,32 @@ fn update_slack(emoji: &str, message: &str) {
         .expect("failed to execute process");
 }
 
+fn dnd(arg: &str) {
+    Command::new("calm-notifications")
+        .args(&[arg])
+        .output()
+        .expect("failed to execute process");
+}
+
+fn pomodoro_on(status: &Status) {
+    let message = format!("focussed: {}m to break", status.remaining_minutes());
+    update_slack("tomato", message.as_str());
+
+    dnd("on");
+}
+
+fn pomodoro_off() {
+    dnd("off");
+
+    update_slack("", "");
+}
+
 fn do_update(status: &Status) {
     match status.state {
-        STATE_RUNNING => update_slack(
-            "tomato",
-            format!("{}m remaining", status.remaining_minutes()).as_str(),
-        ),
-        STATE_BREAKING => update_slack("", ""),
-        STATE_COMPLETE => update_slack("", ""),
-        STATE_PAUSED => update_slack("", ""),
+        STATE_RUNNING => pomodoro_on(status),
+        STATE_BREAKING => pomodoro_off(),
+        STATE_COMPLETE => pomodoro_off(),
+        STATE_PAUSED => pomodoro_off(),
         _ => (),
     }
 }
