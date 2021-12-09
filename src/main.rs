@@ -6,7 +6,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const STATUS_TIME_TO_SECONDS: i64 = 1_000_000_000;
+// const STATUS_TIME_TO_SECONDS: i64 = 1_000_000_000;
 const STATUS_TIME_TO_MINUTES: i64 = 60_000_000_000;
 
 const STATE_UNKNOWN: u8 = 0;
@@ -50,27 +50,19 @@ impl Status {
         1 + self.remaining / STATUS_TIME_TO_MINUTES
     }
 
-    fn remaining_seconds(&self) -> i64 {
-        self.remaining / STATUS_TIME_TO_SECONDS
-    }
+    // fn remaining_seconds(&self) -> i64 {
+    //     self.remaining / STATUS_TIME_TO_SECONDS
+    // }
 
-    fn remaining_subseconds(&self) -> i64 {
-        self.remaining_seconds() - (self.remaining_minutes() * 60)
-    }
+    // fn remaining_subseconds(&self) -> i64 {
+    //     self.remaining_seconds() - (self.remaining_minutes() * 60)
+    // }
 
     fn format_remaining(&self) -> String {
         if self.remaining > 0 {
-            format!(
-                "{:?}:{:?}m",
-                self.remaining_minutes(),
-                self.remaining_subseconds()
-            )
+            format!("{:?}m", self.remaining_minutes())
         } else {
-            format!(
-                "{:?}:{:?}m ago",
-                -self.remaining_minutes(),
-                -self.remaining_subseconds()
-            )
+            format!("{:?}m ago", -self.remaining_minutes())
         }
     }
 }
@@ -108,7 +100,7 @@ fn dnd(arg: &str) {
 }
 
 fn pomodoro_on(status: &Status) {
-    let message = format!("focussed: {}m to break", status.remaining_minutes());
+    let message = format!("focused: {}m to break", status.remaining_minutes());
     update_slack("tomato", message.as_str());
 
     dnd("on");
@@ -121,6 +113,12 @@ fn pomodoro_off() {
 }
 
 fn do_update(status: &Status) {
+    if status.remaining_minutes() == 1 {
+        // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
+        // notification works.
+        dnd("off");
+    }
+
     match status.state {
         STATE_RUNNING => pomodoro_on(status),
         STATE_BREAKING => pomodoro_off(),
