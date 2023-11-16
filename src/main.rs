@@ -93,32 +93,35 @@ fn update_slack(emoji: &str, message: &str) {
 }
 
 fn dnd(arg: &str) {
-    Command::new("calm-notifications")
-        .args(&[arg])
+    Command::new("shortcuts")
+        .args(&["run", arg])
         .output()
         .expect("failed to execute process");
 }
 
 fn pomodoro_on(status: &Status) {
     let message = format!("focused: {}m to break", status.remaining_minutes());
+    println!("{}", message);
     update_slack("tomato", message.as_str());
 
-    dnd("on");
+    // This requires setting up a shortcut in Shortcuts.app called Focus
+    if status.remaining_minutes() == 1 {
+        // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
+        // notification works.
+        dnd("Unfocus");
+    } else {
+        dnd("Focus");
+    }
 }
 
 fn pomodoro_off() {
-    dnd("off");
+    // This requires setting up a shortcut in Shortcuts.app called Focus
+    dnd("Unfocus");
 
     update_slack("", "");
 }
 
 fn do_update(status: &Status) {
-    if status.remaining_minutes() == 1 {
-        // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
-        // notification works.
-        dnd("off");
-    }
-
     match status.state {
         STATE_RUNNING => pomodoro_on(status),
         STATE_BREAKING => pomodoro_off(),
