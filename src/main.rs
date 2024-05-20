@@ -2,9 +2,13 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 use std::io::Read;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use time::OffsetDateTime;
 
 // const STATUS_TIME_TO_SECONDS: i64 = 1_000_000_000;
 const STATUS_TIME_TO_MINUTES: i64 = 60_000_000_000;
@@ -59,10 +63,16 @@ impl Status {
     // }
 
     fn format_remaining(&self) -> String {
+        if self.state == STATE_UNKNOWN {
+            return "".into();
+        }
+
         if self.remaining > 0 {
             format!("{:?}m", self.remaining_minutes())
-        } else {
+        } else if self.remaining < 0 {
             format!("{:?}m ago", -self.remaining_minutes())
+        } else {
+            "now".into()
         }
     }
 }
@@ -93,10 +103,28 @@ fn update_slack(emoji: &str, message: &str) {
 }
 
 fn dnd(arg: &str) {
+    println!("DND: {}", arg);
     Command::new("shortcuts")
         .args(&["run", arg])
         .output()
         .expect("failed to execute process");
+}
+
+fn osascript(script: &str) {
+    Command::new("osascript")
+        .args(&["-e", script])
+        .output()
+        .expect("failed to execute osascript process");
+}
+
+fn beepbeep() {
+    // beep 1 seems to get caught in a buffer and not do anything; beep 2 works, but it needs to be
+    // just annoying enough to really catch my attention
+    osascript("beep 8");
+}
+
+fn alert_stop_work() {
+    osascript("display dialog \"Pomodoro done\"");
 }
 
 fn pomodoro_on(status: &Status) {
@@ -108,7 +136,11 @@ fn pomodoro_on(status: &Status) {
     if status.remaining_minutes() == 1 {
         // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
         // notification works.
-        dnd("Unfocus");
+        // Do this in a thread so that we can schedule it for closer to the end of the pomodoro.
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(56));
+            dnd("Unfocus");
+        });
     } else {
         dnd("Focus");
     }
@@ -119,6 +151,9 @@ fn pomodoro_off() {
     dnd("Unfocus");
 
     update_slack("", "");
+
+    beepbeep();
+    alert_stop_work();
 }
 
 fn do_update(status: &Status) {
@@ -133,6 +168,8 @@ fn do_update(status: &Status) {
 
 fn main() -> std::io::Result<()> {
     let listener = UnixListener::bind("/Users/amiel/.pomo/publish.sock")?;
+
+    // TODO: Use default?
     let mut current_status = Status {
         count: 0,
         n_pomodoros: 0,
@@ -149,7 +186,8 @@ fn main() -> std::io::Result<()> {
 
                 if current_status.is_change(&status) {
                     println!(
-                        "UPDATE: {:?}: {:?}",
+                        "UPDATE: {} {:?}: {:?}",
+                        OffsetDateTime::now_utc(),
                         status.state(),
                         status.format_remaining()
                     );
