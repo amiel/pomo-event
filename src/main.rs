@@ -67,9 +67,10 @@ impl Status {
             return "".into();
         }
 
-        if self.remaining > 0 {
+        if self.remaining_minutes() == 0 {
             format!("{:?}m", self.remaining_minutes())
-        } else if self.remaining < 0 {
+        } else if self.remaining_minutes() < 0 {
+            // Between -1 and 0 is effectively "now"
             format!("{:?}m ago", -self.remaining_minutes())
         } else {
             "now".into()
@@ -124,7 +125,7 @@ fn beepbeep() {
 }
 
 fn alert_stop_work() {
-    osascript("display dialog \"Pomodoro done\"");
+    osascript("display dialog \"Pomodoro done\" buttons {\"OK\"}");
 }
 
 fn pomodoro_on(status: &Status) {
