@@ -1,6 +1,6 @@
 use std::os::unix::net::{UnixListener, UnixStream};
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -46,6 +46,16 @@ impl Status {
             STATE_COMPLETE => "COMPLETE",
             STATE_PAUSED => "PAUSED",
             _ => "UNKNOWN",
+        }
+    }
+
+    fn short_state(&self) -> &str {
+        match self.state {
+            STATE_RUNNING => "R",
+            STATE_BREAKING => "B",
+            STATE_COMPLETE => "C",
+            STATE_PAUSED => "P",
+            _ => "U",
         }
     }
 
@@ -124,8 +134,15 @@ fn beepbeep() {
     osascript("beep 8");
 }
 
-fn alert_stop_work() {
-    osascript("display dialog \"Pomodoro done\" buttons {\"OK\"}");
+fn alert_stop_work(status: &Status) {
+    osascript(
+        format!(
+            "display dialog \"Pomodoro done {}\" buttons {}",
+            status.format_remaining(),
+            "{\"OK\"}"
+        )
+        .as_str(),
+    );
 }
 
 fn pomodoro_on(status: &Status) {
@@ -147,22 +164,22 @@ fn pomodoro_on(status: &Status) {
     }
 }
 
-fn pomodoro_off() {
+fn pomodoro_off(status: &Status) {
     // This requires setting up a shortcut in Shortcuts.app called Focus
     dnd("Unfocus");
 
     update_slack("", "");
 
     beepbeep();
-    alert_stop_work();
+    alert_stop_work(status);
 }
 
 fn do_update(status: &Status) {
     match status.state {
         STATE_RUNNING => pomodoro_on(status),
-        STATE_BREAKING => pomodoro_off(),
-        STATE_COMPLETE => pomodoro_off(),
-        STATE_PAUSED => pomodoro_off(),
+        STATE_BREAKING => pomodoro_off(status),
+        STATE_COMPLETE => pomodoro_off(status),
+        STATE_PAUSED => pomodoro_off(status),
         _ => (),
     }
 }
@@ -187,13 +204,16 @@ fn main() -> std::io::Result<()> {
 
                 if current_status.is_change(&status) {
                     println!(
-                        "UPDATE: {} {:?}: {:?}",
+                        "\nUPDATE: {} {:?}: {:?}",
                         OffsetDateTime::now_utc(),
                         status.state(),
                         status.format_remaining()
                     );
                     current_status = status;
                     do_update(&current_status);
+                } else {
+                    print!("{}", status.short_state());
+                    std::io::stdout().flush()?;
                 }
             }
             Err(err) => {
