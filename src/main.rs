@@ -170,7 +170,6 @@ fn pomodoro_on(status: &Status) {
 fn pomodoro_off(_status: &Status) {
     // This requires setting up a shortcut in Shortcuts.app called Focus
     dnd("Unfocus");
-
     update_slack("", "");
 }
 
@@ -184,7 +183,7 @@ fn do_update(status: &Status) {
         STATE_RUNNING => pomodoro_on(status),
         STATE_BREAKING => pomodoro_off(status),
         STATE_COMPLETE => pomodoro_off(status),
-        STATE_PAUSED => pomodoro_off(status),
+        STATE_PAUSED => (), // pomodoro_off(status),
         _ => (),
     }
 }
