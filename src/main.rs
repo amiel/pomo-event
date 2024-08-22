@@ -188,8 +188,14 @@ fn do_update(status: &Status) {
     }
 }
 
+fn pomo_sock_path() -> Result<String, std::env::VarError> {
+    let home = std::env::var("HOME")?;
+
+    Ok(String::from(home) + "/.pomo/publish.sock")
+}
+
 fn main() -> std::io::Result<()> {
-    let listener = UnixListener::bind("/Users/amiel/.pomo/publish.sock")?;
+    let listener = UnixListener::bind(pomo_sock_path().expect("Could not get $HOME"))?;
 
     let mut current_status = Status::default();
 
