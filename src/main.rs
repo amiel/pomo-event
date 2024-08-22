@@ -1,6 +1,7 @@
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::{Arc, Mutex};
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -19,6 +20,11 @@ const STATE_BREAKING: u8 = 2;
 const STATE_COMPLETE: u8 = 3;
 const STATE_PAUSED: u8 = 4;
 
+#[derive(Debug, Default, Clone)]
+struct DialogStatus {
+    open: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct Status {
     // TODO: State is an enum:
@@ -30,6 +36,13 @@ struct Status {
     remaining: i64,
     count: u8,
     n_pomodoros: u8,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ApplicationState {
+    current_status: Status,
+    previous_status: Status,
+    dialog_status: Arc<Mutex<DialogStatus>>,
 }
 
 impl Status {
@@ -121,11 +134,11 @@ fn dnd(arg: &str) {
         .expect("failed to execute process");
 }
 
-fn osascript(script: &str) {
+fn osascript(script: &str) -> std::process::Output {
     Command::new("osascript")
         .args(&["-e", script])
         .output()
-        .expect("failed to execute osascript process");
+        .expect("failed to execute osascript process")
 }
 
 fn beepbeep() {
@@ -134,20 +147,44 @@ fn beepbeep() {
     osascript("beep 8");
 }
 
-fn alert_stop_work(status: &Status) {
+fn alert_stop_work(app: &ApplicationState) {
     beepbeep();
 
-    osascript(
-        format!(
-            "display dialog \"Pomodoro done {}\" buttons {}",
-            status.format_remaining(),
-            "{\"OK\"}"
-        )
-        .as_str(),
-    );
+    if let Ok(mut dialog_status) = app.dialog_status.try_lock() {
+        dialog_status.open = true;
+
+        let output = osascript(
+            format!(
+                // "display dialog \"Pomodoro done {}\" buttons {} default button \"Start again\" cancel button \"Dismiss\"", // giving up after 60",
+                "display dialog \"Pomodoro done {}\" buttons {} default button \"OK\"",
+                app.current_status.format_remaining(),
+                // "{\"Dismiss\", \"Start again\"}" // TODO: Implement start again functionality
+                // (would need to `send-keys -t "Pomodoro:2.1" Enter`; "Enter" or "q" when complete)
+                "{\"OK\"}",
+            )
+            .as_str(),
+        );
+
+        dialog_status.open = false;
+
+        println!("GOT RESULT FROM RUNNING OSASCRIPT: {:?}", output);
+        println!(" status: {}", output.status);
+    } else {
+        println!("Didn't open another dialog because it was already open");
+    }
 }
 
-fn pomodoro_on(status: &Status) {
+fn pomodoro_breaking(app: &ApplicationState) {
+    pomodoro_off();
+
+    let app = app.clone();
+    thread::spawn(move || {
+        alert_stop_work(&app);
+    });
+}
+
+fn pomodoro_on(app: &ApplicationState) {
+    let status = app.current_status.clone();
     let message = format!("focused: {}m to break", status.remaining_minutes());
     println!("{}", message);
     update_slack("tomato", message.as_str());
@@ -157,33 +194,27 @@ fn pomodoro_on(status: &Status) {
         // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
         // notification works.
         // Do this in a thread so that we can schedule it for closer to the end of the pomodoro.
-        let status = status.clone();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(56));
-            pomodoro_almost_done(&status);
+            dnd("Unfocus");
         });
     } else {
         dnd("Focus");
     }
 }
 
-fn pomodoro_off(_status: &Status) {
+fn pomodoro_off() {
     // This requires setting up a shortcut in Shortcuts.app called Focus
     dnd("Unfocus");
     update_slack("", "");
 }
 
-fn pomodoro_almost_done(status: &Status) {
-    dnd("Unfocus");
-    alert_stop_work(status);
-}
-
-fn do_update(status: &Status) {
-    match status.state {
-        STATE_RUNNING => pomodoro_on(status),
-        STATE_BREAKING => pomodoro_off(status),
-        STATE_COMPLETE => pomodoro_off(status),
-        STATE_PAUSED => (), // pomodoro_off(status),
+fn do_update(app: &ApplicationState) {
+    match app.current_status.state {
+        STATE_RUNNING => pomodoro_on(app),
+        STATE_BREAKING => pomodoro_breaking(app),
+        STATE_COMPLETE => pomodoro_breaking(app),
+        STATE_PAUSED => pomodoro_off(),
         _ => (),
     }
 }
@@ -197,7 +228,8 @@ fn pomo_sock_path() -> Result<String, std::env::VarError> {
 fn main() -> std::io::Result<()> {
     let listener = UnixListener::bind(pomo_sock_path().expect("Could not get $HOME"))?;
 
-    let mut current_status = Status::default();
+    let mut app = ApplicationState::default();
+    // let mut current_status = Status::default();
 
     // accept connections and process them, spawning a new thread for each one
     for stream in listener.incoming() {
@@ -206,7 +238,7 @@ fn main() -> std::io::Result<()> {
                 /* connection succeeded */
                 let status = handle_client(stream)?;
 
-                if current_status.is_change(&status) {
+                if app.current_status.is_change(&status) {
                     println!(
                         "\nUPDATE: {} {:?} ({}) {:?}",
                         OffsetDateTime::now_utc(),
@@ -214,11 +246,9 @@ fn main() -> std::io::Result<()> {
                         status.short_state(),
                         status.format_remaining()
                     );
-                    current_status = status;
-                    do_update(&current_status);
-                } else {
-                    // print!("{}", status.short_state());
-                    std::io::stdout().flush()?;
+                    app.previous_status = app.current_status;
+                    app.current_status = status;
+                    do_update(&app);
                 }
             }
             Err(err) => {
