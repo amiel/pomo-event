@@ -20,11 +20,6 @@ const STATE_BREAKING: u8 = 2;
 const STATE_COMPLETE: u8 = 3;
 const STATE_PAUSED: u8 = 4;
 
-#[derive(Debug, Default, Clone)]
-struct DialogStatus {
-    open: bool,
-}
-
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct Status {
     // TODO: State is an enum:
@@ -42,7 +37,7 @@ struct Status {
 struct ApplicationState {
     current_status: Status,
     previous_status: Status,
-    dialog_status: Arc<Mutex<DialogStatus>>,
+    dialog_open: Arc<Mutex<()>>,
 }
 
 impl Status {
@@ -150,25 +145,19 @@ fn beepbeep() {
 fn alert_stop_work(app: &ApplicationState) {
     beepbeep();
 
-    if let Ok(mut dialog_status) = app.dialog_status.try_lock() {
-        dialog_status.open = true;
-
-        let output = osascript(
-            format!(
-                // "display dialog \"Pomodoro done {}\" buttons {} default button \"Start again\" cancel button \"Dismiss\"", // giving up after 60",
-                "display dialog \"Pomodoro done {}\" buttons {} default button \"OK\"",
-                app.current_status.format_remaining(),
-                // "{\"Dismiss\", \"Start again\"}" // TODO: Implement start again functionality
-                // (would need to `send-keys -t "Pomodoro:2.1" Enter`; "Enter" or "q" when complete)
-                "{\"OK\"}",
-            )
-            .as_str(),
+    if let Ok(_) = app.dialog_open.try_lock() {
+        let script = format!(
+            // "display dialog \"Pomodoro done {}\" buttons {} default button \"Start again\" cancel button \"Dismiss\"", // giving up after 60",
+            "display dialog \"Pomodoro done {}\" buttons {} default button \"OK\"",
+            app.current_status.format_remaining(),
+            // "{\"Dismiss\", \"Start again\"}" // TODO: Implement start again functionality
+            // (would need to `send-keys -t "Pomodoro:2.1" Enter`; "Enter" or "q" when complete)
+            "{\"OK\"}",
         );
 
-        dialog_status.open = false;
+        let output = osascript(script.as_str());
 
-        println!("GOT RESULT FROM RUNNING OSASCRIPT: {:?}", output);
-        println!(" status: {}", output.status);
+        println!("dialog result: {:?}", output);
     } else {
         println!("Didn't open another dialog because it was already open");
     }
