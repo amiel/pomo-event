@@ -19,7 +19,7 @@ const STATE_BREAKING: u8 = 2;
 const STATE_COMPLETE: u8 = 3;
 const STATE_PAUSED: u8 = 4;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct Status {
     // TODO: State is an enum:
     // RUNNING = 1
@@ -135,6 +135,8 @@ fn beepbeep() {
 }
 
 fn alert_stop_work(status: &Status) {
+    beepbeep();
+
     osascript(
         format!(
             "display dialog \"Pomodoro done {}\" buttons {}",
@@ -155,22 +157,25 @@ fn pomodoro_on(status: &Status) {
         // Turn off Do Not Disturb mode a minute early so that the pomodoro application's
         // notification works.
         // Do this in a thread so that we can schedule it for closer to the end of the pomodoro.
+        let status = status.clone();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(56));
-            dnd("Unfocus");
+            pomodoro_almost_done(&status);
         });
     } else {
         dnd("Focus");
     }
 }
 
-fn pomodoro_off(status: &Status) {
+fn pomodoro_off(_status: &Status) {
     // This requires setting up a shortcut in Shortcuts.app called Focus
     dnd("Unfocus");
 
     update_slack("", "");
+}
 
-    beepbeep();
+fn pomodoro_almost_done(status: &Status) {
+    dnd("Unfocus");
     alert_stop_work(status);
 }
 
@@ -187,13 +192,7 @@ fn do_update(status: &Status) {
 fn main() -> std::io::Result<()> {
     let listener = UnixListener::bind("/Users/amiel/.pomo/publish.sock")?;
 
-    // TODO: Use default?
-    let mut current_status = Status {
-        count: 0,
-        n_pomodoros: 0,
-        remaining: 0,
-        state: STATE_UNKNOWN,
-    };
+    let mut current_status = Status::default();
 
     // accept connections and process them, spawning a new thread for each one
     for stream in listener.incoming() {
@@ -204,15 +203,16 @@ fn main() -> std::io::Result<()> {
 
                 if current_status.is_change(&status) {
                     println!(
-                        "\nUPDATE: {} {:?}: {:?}",
+                        "\nUPDATE: {} {:?} ({}) {:?}",
                         OffsetDateTime::now_utc(),
                         status.state(),
+                        status.short_state(),
                         status.format_remaining()
                     );
                     current_status = status;
                     do_update(&current_status);
                 } else {
-                    print!("{}", status.short_state());
+                    // print!("{}", status.short_state());
                     std::io::stdout().flush()?;
                 }
             }
