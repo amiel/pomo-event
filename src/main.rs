@@ -2,7 +2,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
 
 use std::io::Read;
-use std::process::Command;
+use std::process;
 use std::thread;
 use std::time::Duration;
 
@@ -37,7 +37,7 @@ struct Status {
 struct ApplicationState {
     current_status: Status,
     previous_status: Status,
-    dialog_open: Arc<Mutex<()>>,
+    dialog_process: Arc<Mutex<Option<process::Child>>>,
 }
 
 impl Status {
@@ -71,14 +71,6 @@ impl Status {
         // Without adding one, 59s would be 0m remaining.
         1 + self.remaining / STATUS_TIME_TO_MINUTES
     }
-
-    // fn remaining_seconds(&self) -> i64 {
-    //     self.remaining / STATUS_TIME_TO_SECONDS
-    // }
-
-    // fn remaining_subseconds(&self) -> i64 {
-    //     self.remaining_seconds() - (self.remaining_minutes() * 60)
-    // }
 
     fn format_remaining(&self) -> String {
         if self.state == STATE_UNKNOWN {
@@ -115,7 +107,7 @@ fn handle_client(mut stream: UnixStream) -> std::io::Result<Status> {
 }
 
 fn update_slack(emoji: &str, message: &str) {
-    Command::new("slack_status")
+    process::Command::new("slack_status")
         .args(&[emoji, message])
         .output()
         .expect("failed to execute process");
@@ -123,17 +115,17 @@ fn update_slack(emoji: &str, message: &str) {
 
 fn dnd(arg: &str) {
     println!("DND: {}", arg);
-    Command::new("shortcuts")
+    process::Command::new("shortcuts")
         .args(&["run", arg])
         .output()
         .expect("failed to execute process");
 }
 
-fn osascript(script: &str) -> std::process::Output {
-    Command::new("osascript")
+fn osascript(script: &str) -> std::process::Child {
+    process::Command::new("osascript")
         .args(&["-e", script])
-        .output()
-        .expect("failed to execute osascript process")
+        .spawn()
+        .expect("failed to spawn osascript process")
 }
 
 fn beepbeep() {
@@ -142,34 +134,53 @@ fn beepbeep() {
     osascript("beep 8");
 }
 
-fn alert_stop_work(app: &ApplicationState) {
+fn alert_stop_work(app: &mut ApplicationState) {
     beepbeep();
 
-    if let Ok(_) = app.dialog_open.try_lock() {
+    let mut process_ref = app.dialog_process.lock().expect("could not lock");
+
+    let dialog_open = match process_ref.as_mut() {
+        None => false, // no child process
+        // if an attempt to wait for the process results in None, that means there hasn't been an
+        // exit code yet, and the process is still running (therefore the dialog is open)
+        Some(ref mut child) => child.try_wait().expect("could not wait").is_none(),
+    };
+
+    if dialog_open {
+        println!("Didn't open another dialog because it was already open");
+    } else {
+        // "display dialog \"Pomodoro done {}\" buttons {} default button \"Start again\" cancel button \"Dismiss\"", // giving up after 60",
+        // "{\"Dismiss\", \"Start again\"}" // TODO: Implement start again functionality
+        // (would need to `send-keys -t "Pomodoro:2.1" Enter`; "Enter" or "q" when complete)
+
         let script = format!(
-            // "display dialog \"Pomodoro done {}\" buttons {} default button \"Start again\" cancel button \"Dismiss\"", // giving up after 60",
             "display dialog \"Pomodoro done {}\" buttons {} default button \"OK\"",
             app.current_status.format_remaining(),
-            // "{\"Dismiss\", \"Start again\"}" // TODO: Implement start again functionality
-            // (would need to `send-keys -t "Pomodoro:2.1" Enter`; "Enter" or "q" when complete)
             "{\"OK\"}",
         );
 
-        let output = osascript(script.as_str());
+        let child = osascript(script.as_str());
 
-        println!("dialog result: {:?}", output);
-    } else {
-        println!("Didn't open another dialog because it was already open");
+        *process_ref = Some(child);
     }
 }
 
-fn pomodoro_breaking(app: &ApplicationState) {
+fn pomodoro_complete(app: &ApplicationState) {
     pomodoro_off();
 
-    let app = app.clone();
+    let mut app = app.clone();
     thread::spawn(move || {
-        alert_stop_work(&app);
+        alert_stop_work(&mut app);
     });
+}
+
+fn close_dialog(app: &ApplicationState) {
+    let mut process_ref = app.dialog_process.lock().unwrap();
+    if let Some(ref mut child) = process_ref.take() {
+        // println!("Closing the dialog");
+        // killing the dialog process closes the dialog
+        child.kill().expect("could not stop dialog child process");
+    }
 }
 
 fn pomodoro_on(app: &ApplicationState) {
@@ -177,6 +188,8 @@ fn pomodoro_on(app: &ApplicationState) {
     let message = format!("focused: {}m to break", status.remaining_minutes());
     println!("{}", message);
     update_slack("tomato", message.as_str());
+
+    close_dialog(app);
 
     // This requires setting up a shortcut in Shortcuts.app called Focus
     if status.remaining_minutes() == 1 {
@@ -201,8 +214,8 @@ fn pomodoro_off() {
 fn do_update(app: &ApplicationState) {
     match app.current_status.state {
         STATE_RUNNING => pomodoro_on(app),
-        STATE_BREAKING => pomodoro_breaking(app),
-        STATE_COMPLETE => pomodoro_breaking(app),
+        STATE_BREAKING => pomodoro_complete(app),
+        STATE_COMPLETE => pomodoro_complete(app),
         STATE_PAUSED => pomodoro_off(),
         _ => (),
     }
