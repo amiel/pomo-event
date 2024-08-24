@@ -40,7 +40,16 @@ Currently, this customizes the behavior of pomo with:
 
 #### Set up Focus shortcuts
 
+Use Shortcuts.app to create two shortcuts. Each uses the "Set Focus" action. I used the "Do Not Disturb" Focus, but you could use another, you'll just want to make sure that Focus silences Slack notifications.
+
+* Focus: `Turn` `Do Not Disturb` `On` until `Turned Off`
+* Unfocus: `Turn` `Do Not Disturb` `Off`
+
 #### Set up slack_status script
+
+1. put https://github.com/amiel/dotfiles/blob/master/bin/slack_status somewhere in your PATH
+2. make a Slack API token with the `users.profile:write` permission
+3. set that in your environment as `SLACK_STATUS_API_TOKEN`
 
 #### Optional: set up tmux shortcuts
 
