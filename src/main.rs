@@ -77,13 +77,11 @@ impl Status {
             return "".into();
         }
 
-        if self.remaining_minutes() == 0 {
-            format!("{:?}m", self.remaining_minutes())
-        } else if self.remaining_minutes() < 0 {
-            // Between -1 and 0 is effectively "now"
-            format!("{:?}m ago", -self.remaining_minutes())
-        } else {
-            "now".into()
+        // Between -1 and 0 is effectively "now"
+        match self.remaining_minutes() {
+            0 => format!("{:?}m", self.remaining_minutes()),
+            n if n < 0 => format!("{:?}m ago", -self.remaining_minutes()),
+            _ => "now".into(),
         }
     }
 }
@@ -97,18 +95,18 @@ fn handle_client(mut stream: UnixStream) -> std::io::Result<Status> {
         Err(err) => panic!("Error decoding json {:?}", err),
     };
 
-    let json = base64::decode(v.as_str().unwrap().to_string()).unwrap();
+    let json = base64::decode(v.as_str().unwrap()).unwrap();
 
     let json_str: &str = std::str::from_utf8(&json).unwrap();
 
     let status: Status = serde_json::from_str(json_str).unwrap();
 
-    return Ok(status);
+    Ok(status)
 }
 
 fn update_slack(emoji: &str, message: &str) {
     process::Command::new("slack_status")
-        .args(&[emoji, message])
+        .args([emoji, message])
         .output()
         .expect("failed to execute process");
 }
@@ -116,14 +114,14 @@ fn update_slack(emoji: &str, message: &str) {
 fn dnd(arg: &str) {
     println!("DND: {}", arg);
     process::Command::new("shortcuts")
-        .args(&["run", arg])
+        .args(["run", arg])
         .output()
         .expect("failed to execute process");
 }
 
 fn osascript(script: &str) -> std::process::Child {
     process::Command::new("osascript")
-        .args(&["-e", script])
+        .args(["-e", script])
         .spawn()
         .expect("failed to spawn osascript process")
 }
@@ -134,6 +132,7 @@ fn beepbeep() {
     osascript("beep 8");
 }
 
+// This could be implemented on the ApplicationState?
 fn alert_stop_work(app: &mut ApplicationState) {
     beepbeep();
 
@@ -224,7 +223,7 @@ fn do_update(app: &ApplicationState) {
 fn pomo_sock_path() -> Result<String, std::env::VarError> {
     let home = std::env::var("HOME")?;
 
-    Ok(String::from(home) + "/.pomo/publish.sock")
+    Ok(home + "/.pomo/publish.sock")
 }
 
 fn main() -> std::io::Result<()> {
