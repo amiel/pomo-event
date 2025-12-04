@@ -184,7 +184,7 @@ fn close_dialog(app: &ApplicationState) {
 
 fn pomodoro_on(app: &ApplicationState) {
     let status = app.current_status.clone();
-    let message = format!("focused: {}m to break", status.remaining_minutes());
+    let message = format!("refining - hall pass in {}m :inniebento:", status.remaining_minutes());
     println!("{}", message);
     update_slack("tomato", message.as_str());
 
