@@ -72,6 +72,27 @@ impl Status {
         1 + self.remaining / STATUS_TIME_TO_MINUTES
     }
 
+    // Text for the herdr sidebar's $pomo token. An empty string clears it.
+    fn herdr_status(&self) -> String {
+        match self.state {
+            STATE_RUNNING => format!(
+                "🍅 {}/{} {}m",
+                self.count,
+                self.n_pomodoros,
+                self.remaining_minutes()
+            ),
+            STATE_PAUSED => format!(
+                "⏸ {}/{} {}m",
+                self.count,
+                self.n_pomodoros,
+                self.remaining_minutes()
+            ),
+            STATE_BREAKING => "☕ break".into(),
+            // COMPLETE and UNKNOWN clear it.
+            _ => "".into(),
+        }
+    }
+
     fn format_remaining(&self) -> String {
         if self.state == STATE_UNKNOWN {
             return "".into();
@@ -109,6 +130,19 @@ fn update_slack(emoji: &str, message: &str) {
         .args([emoji, message])
         .output()
         .expect("failed to execute process");
+}
+
+fn update_herdr(text: &str) {
+    // Deliberately not .expect()ing like the others: the herdr sidebar is an
+    // optional display, and a missing binary or a stopped herdr server
+    // shouldn't take down the pomodoro daemon.
+    let result = process::Command::new("herdr-pomo-status")
+        .args([text])
+        .output();
+
+    if let Err(err) = result {
+        println!("herdr-pomo-status failed: {:?}", err);
+    }
 }
 
 fn dnd(arg: &str) {
@@ -211,6 +245,11 @@ fn pomodoro_off() {
 }
 
 fn do_update(app: &ApplicationState) {
+    // Done here rather than inside pomodoro_on/pomodoro_off because
+    // pomodoro_off is shared by PAUSED, BREAKING and COMPLETE, so it can't
+    // tell which state it is rendering.
+    update_herdr(&app.current_status.herdr_status());
+
     match app.current_status.state {
         STATE_RUNNING => pomodoro_on(app),
         STATE_BREAKING => pomodoro_complete(app),
@@ -226,8 +265,25 @@ fn pomo_sock_path() -> Result<String, std::env::VarError> {
     Ok(home + "/.pomo/publish.sock")
 }
 
+// Nothing unlinks the socket on exit, so a file left behind by the last run
+// makes bind() fail with "Address already in use". Clear it first.
+//
+// This does not check whether something is still listening: probing with a
+// connect() would feed handle_client an empty string, which panics, taking
+// down the very instance we were checking for. So: don't run two at once.
+fn remove_stale_socket(path: &str) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+        _ => Ok(()),
+    }
+}
+
 fn main() -> std::io::Result<()> {
-    let listener = UnixListener::bind(pomo_sock_path().expect("Could not get $HOME"))?;
+    let sock_path = pomo_sock_path().expect("Could not get $HOME");
+
+    remove_stale_socket(&sock_path)?;
+
+    let listener = UnixListener::bind(&sock_path)?;
 
     let mut app = ApplicationState::default();
     // let mut current_status = Status::default();
