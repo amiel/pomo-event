@@ -28,15 +28,20 @@ Currently, this customizes the behavior of pomo with:
 #### Install and configure pomo
 
 1. Follow instructions from https://github.com/kevinschoon/pomo to install.
-2. Configure to use a socket by putting the following in `~/.pomo/config.json` (don't forget to update `<your-username>` so that the path accurately reflects your home directory)
+2. Configure to use a socket by putting the following in pomo's config file (don't forget to update `<your-username>` so that the path accurately reflects your home directory)
 
 ```json
 {
   "publish": true,
   "publishJson": true,
-  "publishSocketPath": "/Users/<your-username>/.pomo/publish.sock"
+  "publishSocketPath": "/Users/<your-username>/Library/Application Support/pomo/publish.sock"
 }
 ```
+
+Run `pomo config` to check where that file needs to go and that the settings
+took effect. On macOS it is `~/Library/Application Support/pomo/config.json`,
+*not* `~/.pomo/config.json` — pomo silently ignores the latter, and then
+publishes nothing at all.
 
 #### Set up Focus shortcuts
 

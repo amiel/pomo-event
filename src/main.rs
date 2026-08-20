@@ -259,10 +259,32 @@ fn do_update(app: &ApplicationState) {
     }
 }
 
-fn pomo_sock_path() -> Result<String, std::env::VarError> {
-    let home = std::env::var("HOME")?;
+// Ask pomo where it publishes rather than hardcoding the path.
+//
+// Duplicating it is what made this look broken for months: the config lived at
+// ~/.pomo/config.json, pomo read ~/Library/Application Support/pomo/config.json
+// instead, and pomo-event sat happily listening on a socket nothing wrote to.
+// Reading the path back from pomo means the two cannot disagree, and an empty
+// publishSocketPath (publish never enabled) now fails loudly at startup.
+fn pomo_sock_path() -> std::io::Result<String> {
+    let output = process::Command::new("pomo").arg("config").output()?;
 
-    Ok(home + "/.pomo/publish.sock")
+    let config: Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("could not parse `pomo config` output: {}", err),
+        )
+    })?;
+
+    match config["publishSocketPath"].as_str() {
+        Some(path) if !path.is_empty() => Ok(path.to_string()),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "`pomo config` reports no publishSocketPath. Set publish, \
+             publishJson and publishSocketPath in the config file that \
+             `pomo config` itself reports.",
+        )),
+    }
 }
 
 // Nothing unlinks the socket on exit, so a file left behind by the last run
@@ -279,7 +301,9 @@ fn remove_stale_socket(path: &str) -> std::io::Result<()> {
 }
 
 fn main() -> std::io::Result<()> {
-    let sock_path = pomo_sock_path().expect("Could not get $HOME");
+    let sock_path = pomo_sock_path()?;
+
+    println!("Listening on {}", sock_path);
 
     remove_stale_socket(&sock_path)?;
 
