@@ -136,12 +136,33 @@ fn update_herdr(text: &str) {
     // Deliberately not .expect()ing like the others: the herdr sidebar is an
     // optional display, and a missing binary or a stopped herdr server
     // shouldn't take down the pomodoro daemon.
-    let result = process::Command::new("herdr-pomo-status")
+    //
+    // "Don't crash" is not "don't tell me", though. Only inspecting the spawn
+    // result is how a herdr client/server protocol mismatch went unnoticed:
+    // the binary ran fine, failed to reach herdr, and reported that on a
+    // stderr nobody read. Both the exit status and stderr are logged now.
+    let output = match process::Command::new("herdr-pomo-status")
         .args([text])
-        .output();
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => {
+            println!("herdr-pomo-status failed to run: {:?}", err);
+            return;
+        }
+    };
 
-    if let Err(err) = result {
-        println!("herdr-pomo-status failed: {:?}", err);
+    if !output.status.success() {
+        println!("herdr-pomo-status failed ({})", output.status);
+    }
+
+    // Printed even on success: herdr-pomo-status uses stderr for notes like
+    // "no herdr workspace labeled ...", which is the other way the sidebar
+    // status quietly stops updating.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim_end();
+    if !stderr.is_empty() {
+        println!("{}", stderr);
     }
 }
 
