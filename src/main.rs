@@ -237,7 +237,10 @@ fn close_dialog(app: &ApplicationState) {
     }
 }
 
-fn pomodoro_on(app: &ApplicationState) {
+// `entered` is false on the once-a-minute updates within the same state. Those
+// still refresh Slack's countdown, but skip `shortcuts run`: every run leaves a
+// macOS Live Activity behind, and enough of them pin WindowServer.
+fn pomodoro_on(app: &ApplicationState, entered: bool) {
     let status = app.current_status.clone();
     let message = format!("refining - hall pass in {}m :inniebento:", status.remaining_minutes());
     println!("{}", message);
@@ -254,7 +257,7 @@ fn pomodoro_on(app: &ApplicationState) {
             thread::sleep(Duration::from_secs(56));
             dnd("Unfocus");
         });
-    } else {
+    } else if entered {
         dnd("Focus");
     }
 }
@@ -271,10 +274,14 @@ fn do_update(app: &ApplicationState) {
     // tell which state it is rendering.
     update_herdr(&app.current_status.herdr_status());
 
+    // main() also calls this when only the remaining minutes changed.
+    let entered = app.previous_status.state != app.current_status.state;
+
     match app.current_status.state {
-        STATE_RUNNING => pomodoro_on(app),
-        STATE_BREAKING => pomodoro_complete(app),
-        STATE_COMPLETE => pomodoro_complete(app),
+        STATE_RUNNING => pomodoro_on(app, entered),
+        STATE_BREAKING | STATE_COMPLETE if entered => pomodoro_complete(app),
+        // Keep nagging through the break, but don't reopen a dismissed dialog.
+        STATE_BREAKING => beepbeep(),
         STATE_PAUSED => pomodoro_off(),
         _ => (),
     }
